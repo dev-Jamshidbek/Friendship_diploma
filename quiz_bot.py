@@ -14,9 +14,7 @@
 ║    "correct" maydoni YO'Q — uni yaratuvchi o'zi tanlaydi!    ║
 ╚══════════════════════════════════════════════════════════════╝
 """
-import os
-from dotenv import load_dotenv
-load_dotenv()
+
 import io
 import json
 import logging
@@ -56,11 +54,10 @@ log = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────
 #  CONFIG
 # ──────────────────────────────────────────────────────────────
-BOT_TOKEN = os.getenv("BOT_TOKEN")   # ← @BotFather dan oling
+BOT_TOKEN = "8588187763:AAF-wgS8DNoda1hZnrbu2OYU6t66mCUhPjs"   # ← @BotFather dan oling
 
-_base = os.path.dirname(os.path.abspath(__file__))
-FONT_REG  = os.environ.get("FONT_REG",  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-FONT_BOLD = os.environ.get("FONT_BOLD", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # ──────────────────────────────────────────────────────────────
 #  20 TA DEFAULT SAVOL  —  XOHLAGANINGIZDA O'ZGARTIRING
@@ -717,8 +714,14 @@ async def creator_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ──────────────────────────────────────────────────────────────
 async def q10_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = sessions.get(update.effective_user.id)
-    if not s:
+    if not s or s.get("mode") != "creating":
+        await update.message.reply_text(
+            "⚠️ Sessiya tugadi. /start bilan qayta boshlang.",
+            reply_markup=main_kb(),
+        )
         return ConversationHandler.END
+    if "q10" not in s:
+        s["q10"] = {}
     s["q10"]["question"] = update.message.text.strip()
     await update.message.reply_text(
         "✅ Savol qabul qilindi!\n\n"
@@ -731,7 +734,11 @@ async def q10_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def q10_ans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = sessions.get(update.effective_user.id)
-    if not s:
+    if not s or s.get("mode") != "creating":
+        await update.message.reply_text(
+            "⚠️ Sessiya tugadi. /start bilan qayta boshlang.",
+            reply_markup=main_kb(),
+        )
         return ConversationHandler.END
     s["q10"]["correct"] = update.message.text.strip()
     await update.message.reply_text(
@@ -747,7 +754,11 @@ async def q10_ans(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def q10_opts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     s    = sessions.get(user.id)
-    if not s:
+    if not s or s.get("mode") != "creating":
+        await update.message.reply_text(
+            "⚠️ Sessiya tugadi. /start bilan qayta boshlang.",
+            reply_markup=main_kb(),
+        )
         return ConversationHandler.END
 
     wrong = [x.strip() for x in update.message.text.strip().split(",") if x.strip()]
