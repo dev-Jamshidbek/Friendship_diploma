@@ -570,111 +570,83 @@ def _rf():
 
 
 def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
-    _reg_fonts()
-    buf = io.BytesIO()
-    W, H = A4
-    c = rl_canvas.Canvas(buf, pagesize=A4)
+    W, H = 900, 600
+    img  = Image.new("RGB", (W, H), color=(18, 10, 40))
+    draw = ImageDraw.Draw(img)
 
-    for i in range(120):
-        t = i / 120
-        c.setFillColorRGB(0.07 + 0.03 * t, 0.04 + 0.02 * t, 0.16 + 0.07 * t)
-        c.rect(0, H * t / 1.5, W, H / 120 + 2, fill=1, stroke=0)
+    # Gradient fon
+    for y in range(H):
+        r = int(18 + (30 - 18) * y / H)
+        g = int(10 + (15 - 10) * y / H)
+        b = int(40 + (80 - 40) * y / H)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
 
-    c.setStrokeColorRGB(0.85, 0.68, 0.15)
-    c.setLineWidth(4)
-    c.rect(22, 22, W - 44, H - 44, fill=0, stroke=1)
-    c.setLineWidth(1)
-    c.rect(32, 32, W - 64, H - 64, fill=0, stroke=1)
+    # Border
+    gold = (215, 172, 38)
+    draw.rectangle([12, 12, W - 13, H - 13], outline=gold, width=3)
+    draw.rectangle([22, 22, W - 23, H - 23], outline=gold, width=1)
 
-    c.setFont(_bf(), 18)
-    c.setFillColorRGB(0.85, 0.68, 0.15)
-    for sx, sy in [(52, 52), (W - 52, 52), (52, H - 52), (W - 52, H - 52)]:
-        c.drawCentredString(sx, sy - 8, "+")
+    # Fontlar
+    try:
+        fb = ImageFont.truetype(FONT_BOLD, 48)
+        fm = ImageFont.truetype(FONT_BOLD, 28)
+        fs = ImageFont.truetype(FONT_REG,  22)
+        ft = ImageFont.truetype(FONT_REG,  17)
+    except Exception:
+        fb = fm = fs = ft = ImageFont.load_default()
 
-    c.setStrokeColorRGB(0.85, 0.68, 0.15)
-    c.setLineWidth(0.8)
-    c.line(90, H - 98, W - 90, H - 98)
+    # Sarlavha
+    draw.text((W // 2, 60),  "🏆 SERTIFIKAT",
+              font=fb, fill=(245, 218, 88), anchor="mm")
+    draw.line([(80, 100), (W - 80, 100)], fill=gold, width=1)
 
-    c.setFillColorRGB(0.95, 0.82, 0.28)
-    c.setFont(_bf(), 46)
-    c.drawCentredString(W / 2, H - 150, "SERTIFIKAT")
+    # Taqdim etiladi
+    draw.text((W // 2, 135), "Ushbu sertifikat hurmat bilan taqdim etiladi:",
+              font=ft, fill=(170, 170, 210), anchor="mm")
 
-    c.setFillColorRGB(0.80, 0.80, 0.92)
-    c.setFont(_rf(), 12)
-    c.drawCentredString(W / 2, H - 175, "Meni qanchalik yaxshi bilasiz? — Quiz Bot")
-
-    c.line(110, H - 195, W - 110, H - 195)
-
-    c.setFillColorRGB(0.70, 0.70, 0.85)
-    c.setFont(_rf(), 11)
-    c.drawCentredString(W / 2, H - 228, "Ushbu sertifikat hurmat bilan taqdim etiladi:")
-
+    # Ism
     name_d = solver_name[:28] + ("..." if len(solver_name) > 28 else "")
-    c.setFillColorRGB(0.97, 0.86, 0.35)
-    c.setFont(_bf(), 36)
-    c.drawCentredString(W / 2, H - 272, name_d)
+    draw.text((W // 2, 195), name_d,
+              font=fm, fill=(245, 218, 88), anchor="mm")
+    nw = fm.getlength(name_d)
+    draw.line([(W // 2 - nw // 2, 215), (W // 2 + nw // 2, 215)], fill=gold, width=1)
 
-    nw = c.stringWidth(name_d, _bf(), 36)
-    c.setStrokeColorRGB(0.97, 0.86, 0.35)
-    c.setLineWidth(1.2)
-    c.line(W / 2 - nw / 2, H - 280, W / 2 + nw / 2, H - 280)
+    # Tavsif
+    draw.text((W // 2, 255),
+              f'"{creator_name}" haqidagi viktorinani muvaffaqiyatli yakunladi',
+              font=ft, fill=(200, 200, 230), anchor="mm")
 
-    c.setFillColorRGB(0.82, 0.82, 0.95)
-    c.setFont(_rf(), 12)
-    c.drawCentredString(W / 2, H - 315,
-        f'"{creator_name}" haqidagi viktorinani muvaffaqiyatli yakunladi')
-
-    by = H - 415
-    c.setFillColorRGB(0.10, 0.07, 0.25)
-    c.roundRect(W / 2 - 100, by - 55, 200, 100, 14, fill=1, stroke=0)
-    c.setStrokeColorRGB(0.85, 0.68, 0.15)
-    c.setLineWidth(2.2)
-    c.roundRect(W / 2 - 100, by - 55, 200, 100, 14, fill=0, stroke=1)
-
+    # Natija qutisi
+    draw.rounded_rectangle([W // 2 - 110, 290, W // 2 + 110, 390],
+                            radius=14, fill=(25, 15, 55), outline=gold, width=2)
     pct = int(score / total * 100)
-    c.setFillColorRGB(0.70, 0.70, 0.85)
-    c.setFont(_rf(), 10)
-    c.drawCentredString(W / 2, by + 27, "NATIJA")
+    draw.text((W // 2, 318), "NATIJA",   font=ft, fill=(170, 170, 210), anchor="mm")
+    draw.text((W // 2, 352), f"{score}/{total}", font=fm, fill=(245, 218, 88), anchor="mm")
+    draw.text((W // 2, 378), f"{pct}% to'g'ri", font=ft, fill=(130, 220, 130), anchor="mm")
 
-    c.setFillColorRGB(0.97, 0.86, 0.35)
-    c.setFont(_bf(), 34)
-    c.drawCentredString(W / 2, by - 5, f"{score}/{total}")
-
-    c.setFillColorRGB(0.72, 0.90, 0.72)
-    c.setFont(_rf(), 10)
-    c.drawCentredString(W / 2, by - 30, f"{pct}% to'g'ri javob")
-
+    # Baho
     if pct == 100:
-        lbl, lc = "MUKAMMAL!", (0.97, 0.86, 0.35)
+        lbl, lc = "MUKAMMAL! ⭐⭐⭐⭐⭐", (245, 218, 88)
     elif pct >= 70:
-        lbl, lc = "A'LO NATIJA!", (0.55, 0.92, 0.55)
+        lbl, lc = "A'LO NATIJA! ⭐⭐⭐⭐", (130, 220, 130)
     elif pct >= 40:
-        lbl, lc = "YAXSHI!", (0.55, 0.78, 0.97)
+        lbl, lc = "YAXSHI! ⭐⭐⭐", (100, 170, 245)
     else:
-        lbl, lc = "DAVOM ETING!", (0.90, 0.65, 0.40)
+        lbl, lc = "DAVOM ETING! ⭐⭐", (230, 160, 90)
 
-    c.setFillColorRGB(*lc)
-    c.setFont(_bf(), 17)
-    c.drawCentredString(W / 2, H - 488, lbl)
+    draw.text((W // 2, 430), lbl, font=fs, fill=lc, anchor="mm")
 
-    c.setFillColorRGB(0.50, 0.50, 0.62)
-    c.setFont(_rf(), 9)
-    c.drawCentredString(W / 2, H - 528,
-        f"Sana: {datetime.now().strftime('%d.%m.%Y')}    |    Quiz ID: {quiz_id}")
+    # Pastki info
+    draw.line([(80, 470), (W - 80, 470)], fill=gold, width=1)
+    draw.text((W // 2, 498),
+              f"Sana: {datetime.now().strftime('%d.%m.%Y')}   |   Quiz ID: {quiz_id}",
+              font=ft, fill=(120, 120, 160), anchor="mm")
+    draw.text((W // 2, 530),
+              "Meni qanchalik yaxshi bilasiz? — Quiz Bot",
+              font=ft, fill=(100, 100, 140), anchor="mm")
 
-    c.setStrokeColorRGB(0.85, 0.68, 0.15)
-    c.setLineWidth(0.8)
-    c.line(80, 88, W - 80, 88)
-
-    c.setFillColorRGB(0.85, 0.68, 0.15)
-    c.setFont(_bf(), 9)
-    c.drawCentredString(W / 2, 70, "Meni qanchalik yaxshi bilasiz? — Quiz Bot")
-
-    c.setFillColorRGB(0.48, 0.48, 0.60)
-    c.setFont(_rf(), 7)
-    c.drawCentredString(W / 2, 54, "Ushbu sertifikat bot tomonidan avtomatik yaratilgan")
-
-    c.save()
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf.read()
 
@@ -1242,11 +1214,10 @@ async def solver_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         cert = make_certificate(user.first_name, quiz["creator_name"], score, total, quiz_id)
-        kb   = [[InlineKeyboardButton("🏅 Reyting jadvalini ko'rish", callback_data=f"lb_{quiz_id}")]]
-        await context.bot.send_document(
+        kb = [[InlineKeyboardButton("🏅 Reyting jadvalini ko'rish", callback_data=f"lb_{quiz_id}")]]
+        await context.bot.send_photo(
             chat_id=user.id,
-            document=io.BytesIO(cert),
-            filename=f"sertifikat_{user.first_name}.pdf",
+            photo=io.BytesIO(cert),
             caption=(
                 f"🎓 <b>{user.first_name}</b> uchun sertifikat!\n"
                 f"🏆 Natija: <b>{score}/{total}</b> ({int(pct * 100)}%)\n"
