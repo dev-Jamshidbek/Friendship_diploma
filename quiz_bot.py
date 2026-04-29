@@ -341,6 +341,14 @@ def db_has_played(quiz_id, solver_id) -> bool:
         return row is not None
 
 
+def db_delete_quiz(quiz_id):
+    """Quizni va unga tegishli barcha ma'lumotlarni o'chiradi."""
+    with db() as c:
+        c.execute("DELETE FROM questions WHERE quiz_id=?", (quiz_id,))
+        c.execute("DELETE FROM scores    WHERE quiz_id=?", (quiz_id,))
+        c.execute("DELETE FROM quizzes   WHERE quiz_id=?", (quiz_id,))
+
+
 def db_delete_expired_quizzes():
     """15 kundan o'tgan quizlarni o'chirib tashlash."""
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -533,7 +541,7 @@ def make_quiz_poster(creator_name: str, quiz_id: str, link: str, expire_days: in
 
     # Pastki matn
     draw.line([(80, 530), (W - 80, 530)], fill=border_color, width=1)
-    draw.text((W // 2, 555), "Telegram Quiz Bot  •  @mening_botim",
+    draw.text((W // 2, 555), "Friendship Diploma  •  @frienship_diploma_bot",
               font=font_tiny, fill=(100, 100, 140), anchor="mm")
 
     buf = io.BytesIO()
@@ -844,12 +852,12 @@ async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user  = update.effective_user
 
+    # ── Draft davom etish ──
     if query.data == "draft_continue":
         draft = draft_load(user.id)
         if not draft:
             await query.message.reply_text("⚠️ Draft topilmadi.", reply_markup=main_kb())
             return ST_MENU
-
         sessions[user.id] = {
             "mode":            "creating",
             "quiz_id":         draft["quiz_id"],
@@ -867,16 +875,37 @@ async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_creator_question(context, query.message.chat_id, user.id)
         return ST_CREATOR_ANS
 
+    # ── Draft o'chirish ──
     elif query.data == "draft_delete":
         draft_delete(user.id)
         await query.message.reply_text(
-            "🗑️ Draft o'chirildi.\n\n👉 /start bilan yangi quiz yarating.",
+            "🗑️ Draft o'chirildi.\n\n👉 <b>Quiz yaratish</b> tugmasini bosing.",
+            reply_markup=main_kb(),
+            parse_mode="HTML",
+        )
+        return ST_MENU
+
+    # ── Eski aktiv quizni o'chirib yangi yaratish ──
+    elif query.data.startswith("delete_old_"):
+        old_quiz_id = query.data.replace("delete_old_", "")
+        db_delete_quiz(old_quiz_id)
+        await query.message.reply_text(
+            "🗑️ Eski quiz o'chirildi!\n\n"
+            "🎯 Endi <b>Quiz yaratish</b> tugmasini bosib yangi quiz yarating.",
+            reply_markup=main_kb(),
+            parse_mode="HTML",
+        )
+        return ST_MENU
+
+    # ── Bekor qilish ──
+    elif query.data == "cancel_create":
+        await query.message.reply_text(
+            "❌ Bekor qilindi.",
             reply_markup=main_kb(),
         )
         return ST_MENU
 
     return ST_MENU
-
 
 # ──────────────────────────────────────────────────────────────
 #  PASTKI MENYU TUGMALARI
@@ -886,7 +915,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "🎯 Quiz yaratish":
-        # Avval draft borligini tekshir
+        # Draft borligini tekshir
         draft = draft_load(user.id)
         if draft:
             kb = InlineKeyboardMarkup([[
@@ -902,16 +931,50 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ST_CREATOR_ANS
 
+        # Aktiv quiz borligini tekshir
+        existing = db_user_quizzes(user.id)
+        # Muddati o'tmagan quizlarni filter qilish
+        active_quizzes = []
+        for q in existing:
+            if q["expires_at"]:
+                try:
+                    exp = datetime.strptime(q["expires_at"], "%Y-%m-%d %H:%M:%S")
+                    if datetime.utcnow() < exp:
+                        active_quizzes.append(q)
+                except Exception:
+                    pass
+
+        if active_quizzes:
+            aq = active_quizzes[0]
+            exp_date = aq["expires_at"][:10] if aq["expires_at"] else "—"
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🗑️ Eskisini o'chirib yangi yaratish",
+                                     callback_data=f"delete_old_{aq['quiz_id']}"),
+                InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel_create"),
+            ]])
+            await update.message.reply_text(
+                f"⚠️ Sizda allaqachon aktiv quiz bor!\n\n"
+                f"🆔 <code>{aq['quiz_id']}</code>\n"
+                f"📅 Yaratilgan: <b>{aq['created_at'][:10]}</b>\n"
+                f"⏳ Muddati: <b>{exp_date}</b> gacha\n\n"
+                "Yangi quiz yaratish uchun eskisini o'chirish kerak.\n"
+                "O'chirilgan quiz natijalari ham o'chib ketadi!",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+            return ST_MENU
+
+        # Quiz yo'q — yangi yaratish
         picked = random.sample(DEFAULT_QUESTIONS, min(9, len(DEFAULT_QUESTIONS)))
         sessions[user.id] = {
-            "mode":            "creating",
-            "quiz_id":         "quiz_" + str(uuid.uuid4())[:8],
-            "questions":       [dict(q) for q in picked],
-            "step":            0,
+            "mode": "creating",
+            "quiz_id": "quiz_" + str(uuid.uuid4())[:8],
+            "questions": [dict(q) for q in picked],
+            "step": 0,
             "creator_answers": [],
             "current_options": [],
-            "msg_id":          None,
-            "q10":             {},
+            "msg_id": None,
+            "q10": {},
         }
         await update.message.reply_text(
             "🎲 <b>9 ta savol avtomatik tanlandi!</b> ✅\n\n"
@@ -1356,6 +1419,8 @@ def main():
             ST_MENU: [
                 MessageHandler(filters.Regex(MENU_PATTERN), menu_handler),
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
+                CallbackQueryHandler(draft_callback, pattern=r"^delete_old_"),  # ← yangi
+                CallbackQueryHandler(draft_callback, pattern=r"^cancel_create$"),  # ← yangi
             ],
             ST_CREATOR_ANS: [
                 CallbackQueryHandler(creator_answer,  pattern=r"^opt_\d+$"),
