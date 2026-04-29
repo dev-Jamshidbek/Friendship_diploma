@@ -8,10 +8,11 @@
 ║  BOT_TOKEN ni quyida o'zgartiring, keyin:                    ║
 ║    python quiz_bot.py                                        ║
 ╠══════════════════════════════════════════════════════════════╣
-║  SAVOLLARNI O'ZGARTIRISH:                                    ║
-║    DEFAULT_QUESTIONS ro'yxatini tahrirlang (quyida).         ║
-║    Har savol: question, options, image_url                   ║
-║    "correct" maydoni YO'Q — uni yaratuvchi o'zi tanlaydi!    ║
+║  YANGI XUSUSIYATLAR:                                         ║
+║    ✅ Quiz 15 kunda avtomatik o'chiriladi                    ║
+║    ✅ Quiz yaratishda progress DB ga saqlanadi               ║
+║    ✅ Do'st quizni ikki marta ishlay olmaydi                 ║
+║    ✅ Havola + poster rasm bilan forward qilinadi            ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -21,8 +22,9 @@ import logging
 import random
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -59,14 +61,11 @@ BOT_TOKEN = "8588187763:AAF-wgS8DNoda1hZnrbu2OYU6t66mCUhPjs"   # ← @BotFather 
 FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
+# Quiz 15 kun amal qiladi
+QUIZ_EXPIRE_DAYS = 15
+
 # ──────────────────────────────────────────────────────────────
 #  20 TA DEFAULT SAVOL  —  XOHLAGANINGIZDA O'ZGARTIRING
-#
-#  ✅ question  — savol matni
-#  ✅ options   — barcha variantlar ro'yxati
-#  ✅ image_url — rasm URL  (bo'sh "" qolsa rasm yo'q)
-#
-#  "correct" maydoni YO'Q — uni yaratuvchi /start da o'zi tanlaydi!
 # ──────────────────────────────────────────────────────────────
 DEFAULT_QUESTIONS = [
     {
@@ -190,19 +189,18 @@ DEFAULT_QUESTIONS = [
     },
 ]
 
-# 10-savol uchun universal default rasm
 Q10_IMAGE = "https://images.unsplash.com/photo-1633613286991-611fe299c4be?w=800"
 
 # ──────────────────────────────────────────────────────────────
 #  STATES
 # ──────────────────────────────────────────────────────────────
 (
-    ST_MENU,             # bosh menyu
-    ST_CREATOR_ANS,      # yaratuvchi 9 savolga javob beradi
-    ST_Q10_TEXT,         # 10-savol matni
-    ST_Q10_ANS,          # 10-savol to'g'ri javob
-    ST_Q10_OPTS,         # 10-savol noto'g'ri variantlar
-    ST_SOLVING,          # do'st testni ishlaydi
+    ST_MENU,
+    ST_CREATOR_ANS,
+    ST_Q10_TEXT,
+    ST_Q10_ANS,
+    ST_Q10_OPTS,
+    ST_SOLVING,
 ) = range(6)
 
 # ──────────────────────────────────────────────────────────────
@@ -229,7 +227,8 @@ def init_db():
             quiz_id      TEXT PRIMARY KEY,
             creator_id   INTEGER,
             creator_name TEXT,
-            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at   DATETIME
         );
         CREATE TABLE IF NOT EXISTS questions (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,14 +248,32 @@ def init_db():
             total       INTEGER,
             played_at   DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS draft_sessions (
+            user_id      INTEGER PRIMARY KEY,
+            quiz_id      TEXT,
+            questions    TEXT,
+            step         INTEGER DEFAULT 0,
+            answers      TEXT DEFAULT '[]',
+            q10          TEXT DEFAULT '{}',
+            updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         """)
+        # expires_at ustunini eski DBga qo'shish (migration)
+        try:
+            c.execute("ALTER TABLE quizzes ADD COLUMN expires_at DATETIME")
+        except Exception:
+            pass
 
 
+# ──────────────────────────────────────────────────────────────
+#  QUIZ CRUD
+# ──────────────────────────────────────────────────────────────
 def db_save_quiz(quiz_id, creator_id, creator_name, questions):
+    expires = datetime.utcnow() + timedelta(days=QUIZ_EXPIRE_DAYS)
     with db() as c:
         c.execute(
-            "INSERT INTO quizzes (quiz_id, creator_id, creator_name) VALUES (?,?,?)",
-            (quiz_id, creator_id, creator_name),
+            "INSERT INTO quizzes (quiz_id, creator_id, creator_name, expires_at) VALUES (?,?,?,?)",
+            (quiz_id, creator_id, creator_name, expires.strftime("%Y-%m-%d %H:%M:%S")),
         )
         for i, q in enumerate(questions):
             c.execute(
@@ -272,6 +289,14 @@ def db_get_quiz(quiz_id):
         row = c.execute("SELECT * FROM quizzes WHERE quiz_id=?", (quiz_id,)).fetchone()
         if not row:
             return None
+        # Muddati o'tgan quizni qaytarma
+        if row["expires_at"]:
+            try:
+                exp = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S")
+                if datetime.utcnow() > exp:
+                    return None
+            except Exception:
+                pass
         qs = c.execute(
             "SELECT question,correct,options,image_url FROM questions"
             " WHERE quiz_id=? ORDER BY step", (quiz_id,)
@@ -300,17 +325,89 @@ def db_get_scores(quiz_id):
 def db_user_quizzes(creator_id):
     with db() as c:
         return c.execute(
-            "SELECT quiz_id,created_at FROM quizzes"
+            "SELECT quiz_id,created_at,expires_at FROM quizzes"
             " WHERE creator_id=? ORDER BY created_at DESC",
             (creator_id,),
         ).fetchall()
+
+
+def db_has_played(quiz_id, solver_id) -> bool:
+    """Do'st bu quizni avval ishlaganmi?"""
+    with db() as c:
+        row = c.execute(
+            "SELECT id FROM scores WHERE quiz_id=? AND solver_id=?",
+            (quiz_id, solver_id),
+        ).fetchone()
+        return row is not None
+
+
+def db_delete_expired_quizzes():
+    """15 kundan o'tgan quizlarni o'chirib tashlash."""
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with db() as c:
+        expired = c.execute(
+            "SELECT quiz_id FROM quizzes WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (now,),
+        ).fetchall()
+        for row in expired:
+            qid = row["quiz_id"]
+            c.execute("DELETE FROM questions WHERE quiz_id=?", (qid,))
+            c.execute("DELETE FROM scores    WHERE quiz_id=?", (qid,))
+            c.execute("DELETE FROM quizzes   WHERE quiz_id=?", (qid,))
+        if expired:
+            log.info(f"O'chirilgan quizlar soni: {len(expired)}")
+
+
+# ──────────────────────────────────────────────────────────────
+#  DRAFT SESSION (progress saqlash)
+# ──────────────────────────────────────────────────────────────
+def draft_save(user_id, quiz_id, questions, step, answers, q10):
+    with db() as c:
+        c.execute("""
+            INSERT INTO draft_sessions (user_id, quiz_id, questions, step, answers, q10, updated_at)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                quiz_id=excluded.quiz_id,
+                questions=excluded.questions,
+                step=excluded.step,
+                answers=excluded.answers,
+                q10=excluded.q10,
+                updated_at=excluded.updated_at
+        """, (
+            user_id, quiz_id,
+            json.dumps(questions, ensure_ascii=False),
+            step,
+            json.dumps(answers, ensure_ascii=False),
+            json.dumps(q10, ensure_ascii=False),
+            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+
+
+def draft_load(user_id):
+    with db() as c:
+        row = c.execute(
+            "SELECT * FROM draft_sessions WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "quiz_id":   row["quiz_id"],
+            "questions": json.loads(row["questions"]),
+            "step":      row["step"],
+            "answers":   json.loads(row["answers"]),
+            "q10":       json.loads(row["q10"]),
+        }
+
+
+def draft_delete(user_id):
+    with db() as c:
+        c.execute("DELETE FROM draft_sessions WHERE user_id=?", (user_id,))
 
 
 # ──────────────────────────────────────────────────────────────
 #  KEYBOARD HELPERS
 # ──────────────────────────────────────────────────────────────
 def main_kb():
-    """Pastki doimiy menyu."""
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("🎯 Quiz yaratish")],
@@ -322,7 +419,6 @@ def main_kb():
 
 
 def inline_options(options: list) -> list:
-    """Javob variantlari uchun InlineKeyboard. callback_data = idx (matn emas!)."""
     return [
         [InlineKeyboardButton(opt, callback_data=f"opt_{i}")]
         for i, opt in enumerate(options)
@@ -330,7 +426,7 @@ def inline_options(options: list) -> list:
 
 
 # ──────────────────────────────────────────────────────────────
-#  MESSAGE HELPER  —  avvalgi savolni o'chiradi, yangi yuboradi
+#  SAVOL YUBORISH HELPER
 # ──────────────────────────────────────────────────────────────
 async def send_question(
     context: ContextTypes.DEFAULT_TYPE,
@@ -340,8 +436,6 @@ async def send_question(
     options: list,
     image_url: str,
 ):
-    """Avvalgi savol xabarini o'chirib, yangi savol xabar yuboradi."""
-    # Avvalgi xabarni o'chirish
     old_id = session.get("msg_id")
     if old_id:
         try:
@@ -376,6 +470,79 @@ async def send_question(
 
 
 # ──────────────────────────────────────────────────────────────
+#  POSTER RASM YARATISH (Pillow)
+# ──────────────────────────────────────────────────────────────
+def make_quiz_poster(creator_name: str, quiz_id: str, link: str, expire_days: int = 15) -> bytes:
+    """Quiz uchun poster rasm PNG formatida qaytaradi."""
+    W, H = 800, 600
+    img = Image.new("RGB", (W, H), color=(18, 10, 40))
+    draw = ImageDraw.Draw(img)
+
+    # Gradient fon (qo'lda)
+    for y in range(H):
+        r = int(18 + (30 - 18) * y / H)
+        g = int(10 + (15 - 10) * y / H)
+        b = int(40 + (70 - 40) * y / H)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+    # Border
+    border_color = (215, 172, 38)
+    draw.rectangle([12, 12, W - 13, H - 13], outline=border_color, width=3)
+    draw.rectangle([22, 22, W - 23, H - 23], outline=border_color, width=1)
+
+    # Fontlar
+    try:
+        font_big   = ImageFont.truetype(FONT_BOLD, 52)
+        font_med   = ImageFont.truetype(FONT_BOLD, 30)
+        font_small = ImageFont.truetype(FONT_REG,  22)
+        font_tiny  = ImageFont.truetype(FONT_REG,  18)
+    except Exception:
+        font_big = font_med = font_small = font_tiny = ImageFont.load_default()
+
+    # Sarlavha
+    title = "🧠 QUIZ"
+    draw.text((W // 2, 80), title, font=font_big, fill=(245, 218, 88), anchor="mm")
+
+    # Chiziq
+    draw.line([(80, 130), (W - 80, 130)], fill=border_color, width=1)
+
+    # Asosiy matn
+    draw.text((W // 2, 195), "Meni qanchalik yaxshi bilasiz?",
+              font=font_med, fill=(210, 210, 240), anchor="mm")
+
+    # Yaratuvchi nomi
+    name_short = creator_name[:22] + ("..." if len(creator_name) > 22 else "")
+    draw.text((W // 2, 265), f"✨  {name_short}  ✨",
+              font=font_med, fill=(245, 218, 88), anchor="mm")
+
+    # Savollar soni
+    draw.text((W // 2, 330), "📝 10 ta savol   |   🏆 Sertifikat",
+              font=font_small, fill=(180, 180, 220), anchor="mm")
+
+    # Muddati
+    expire_date = (datetime.now() + timedelta(days=expire_days)).strftime("%d.%m.%Y")
+    draw.text((W // 2, 390), f"⏳ Muddati: {expire_date} gacha",
+              font=font_tiny, fill=(160, 160, 200), anchor="mm")
+
+    # Havola qutisi
+    draw.rounded_rectangle([60, 430, W - 60, 510], radius=16,
+                            fill=(30, 18, 60), outline=border_color, width=2)
+    link_display = link if len(link) <= 44 else link[:41] + "..."
+    draw.text((W // 2, 470), f"🔗 {link_display}",
+              font=font_tiny, fill=(100, 200, 255), anchor="mm")
+
+    # Pastki matn
+    draw.line([(80, 530), (W - 80, 530)], fill=border_color, width=1)
+    draw.text((W // 2, 555), "Telegram Quiz Bot  •  @mening_botim",
+              font=font_tiny, fill=(100, 100, 140), anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
+
+
+# ──────────────────────────────────────────────────────────────
 #  CERTIFICATE
 # ──────────────────────────────────────────────────────────────
 def _reg_fonts():
@@ -400,20 +567,17 @@ def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
     W, H = A4
     c = rl_canvas.Canvas(buf, pagesize=A4)
 
-    # Background gradient
     for i in range(120):
         t = i / 120
         c.setFillColorRGB(0.07 + 0.03 * t, 0.04 + 0.02 * t, 0.16 + 0.07 * t)
         c.rect(0, H * t / 1.5, W, H / 120 + 2, fill=1, stroke=0)
 
-    # Borders
     c.setStrokeColorRGB(0.85, 0.68, 0.15)
     c.setLineWidth(4)
     c.rect(22, 22, W - 44, H - 44, fill=0, stroke=1)
     c.setLineWidth(1)
     c.rect(32, 32, W - 64, H - 64, fill=0, stroke=1)
 
-    # Corner marks
     c.setFont(_bf(), 18)
     c.setFillColorRGB(0.85, 0.68, 0.15)
     for sx, sy in [(52, 52), (W - 52, 52), (52, H - 52), (W - 52, H - 52)]:
@@ -511,7 +675,7 @@ def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
 #  CREATOR SAVOL YUBORISH
 # ──────────────────────────────────────────────────────────────
 async def show_creator_question(context, chat_id, user_id):
-    s = sessions[user_id]
+    s     = sessions[user_id]
     step  = s["step"]
     total = len(s["questions"])
     q     = s["questions"][step]
@@ -524,10 +688,19 @@ async def show_creator_question(context, chat_id, user_id):
         f"{q['question']}"
     )
 
-    # Shuffled options stored so we can retrieve by index
     shuffled = list(options)
     random.shuffle(shuffled)
     s["current_options"] = shuffled
+
+    # Progressni DB ga saqlash
+    draft_save(
+        user_id,
+        s["quiz_id"],
+        s["questions"],
+        step,
+        s.get("creator_answers", []),
+        s.get("q10", {}),
+    )
 
     await send_question(context, chat_id, s, caption, shuffled, q.get("image_url", ""))
 
@@ -572,17 +745,42 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not quiz:
             await update.message.reply_text(
-                "❌ Viktorina topilmadi.",
+                "❌ Viktorina topilmadi yoki muddati tugagan.\n\n"
+                "⏳ Quizlar <b>15 kun</b> amal qiladi.",
                 reply_markup=main_kb(),
+                parse_mode="HTML",
             )
             return ST_MENU
 
+        # Yaratuvchi o'z testini ishlay olmaydi
         if quiz["creator_id"] == user.id:
             await update.message.reply_text(
                 "🚫 Siz bu viktorinaning yaratuvchisisiz!\n"
                 "O'z testingizni ishlab bo'lmaydi 😄\n\n"
                 "Havolani do'stlaringizga yuboring! 📲",
                 reply_markup=main_kb(),
+            )
+            return ST_MENU
+
+        # Ikki marta ishlash tekshiruvi
+        if db_has_played(quiz_id, user.id):
+            rows = db_get_scores(quiz_id)
+            my_row = None
+            with db() as conn:
+                my_row = conn.execute(
+                    "SELECT score, total FROM scores WHERE quiz_id=? AND solver_id=?",
+                    (quiz_id, user.id),
+                ).fetchone()
+            score_txt = ""
+            if my_row:
+                pct = int(my_row["score"] / my_row["total"] * 100)
+                score_txt = f"\n📊 Sizning natijangiz: <b>{my_row['score']}/{my_row['total']}</b> ({pct}%)"
+            await update.message.reply_text(
+                f"⚠️ Siz bu viktorinani allaqachon ishlagansiz!\n"
+                f"Bir kishiga faqat <b>1 marta</b> ruxsat beriladi.{score_txt}\n\n"
+                "📊 /natijalar — umumiy natijalarni ko'rish",
+                reply_markup=main_kb(),
+                parse_mode="HTML",
             )
             return ST_MENU
 
@@ -605,7 +803,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_solver_question(context, update.effective_chat.id, user.id)
         return ST_SOLVING
 
-    # Oddiy /start
+    # Oddiy /start — draft bormi tekshiramiz
+    draft = draft_load(user.id)
+    if draft:
+        # Davom etish tugmasi
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("▶️ Davom etish", callback_data="draft_continue"),
+            InlineKeyboardButton("🗑️ O'chirish", callback_data="draft_delete"),
+        ]])
+        await update.message.reply_text(
+            f"👋 Salom, <b>{user.first_name}</b>!\n\n"
+            f"📌 Sizda tugallanmagan quiz bor!\n"
+            f"📝 <b>{draft['step']}/9</b> ta savolga javob berilgan.\n\n"
+            "Davom etasizmi?",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+        return ST_CREATOR_ANS
+
     await update.message.reply_text(
         f"👋 Salom, <b>{user.first_name}</b>!\n\n"
         "🎯 <b>Meni qanchalik yaxshi bilasiz?</b>\n\n"
@@ -622,6 +837,48 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────────────────────
+#  DRAFT CALLBACK (davom etish / o'chirish)
+# ──────────────────────────────────────────────────────────────
+async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user  = update.effective_user
+
+    if query.data == "draft_continue":
+        draft = draft_load(user.id)
+        if not draft:
+            await query.message.reply_text("⚠️ Draft topilmadi.", reply_markup=main_kb())
+            return ST_MENU
+
+        sessions[user.id] = {
+            "mode":            "creating",
+            "quiz_id":         draft["quiz_id"],
+            "questions":       draft["questions"],
+            "step":            draft["step"],
+            "creator_answers": draft["answers"],
+            "current_options": [],
+            "msg_id":          None,
+            "q10":             draft["q10"],
+        }
+        await query.message.reply_text(
+            f"▶️ Davom etilmoqda... <b>{draft['step'] + 1}</b>-savoldan.",
+            parse_mode="HTML",
+        )
+        await show_creator_question(context, query.message.chat_id, user.id)
+        return ST_CREATOR_ANS
+
+    elif query.data == "draft_delete":
+        draft_delete(user.id)
+        await query.message.reply_text(
+            "🗑️ Draft o'chirildi.\n\n👉 /start bilan yangi quiz yarating.",
+            reply_markup=main_kb(),
+        )
+        return ST_MENU
+
+    return ST_MENU
+
+
+# ──────────────────────────────────────────────────────────────
 #  PASTKI MENYU TUGMALARI
 # ──────────────────────────────────────────────────────────────
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -629,6 +886,22 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "🎯 Quiz yaratish":
+        # Avval draft borligini tekshir
+        draft = draft_load(user.id)
+        if draft:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("▶️ Davom etish", callback_data="draft_continue"),
+                InlineKeyboardButton("🗑️ Yangidan boshlash", callback_data="draft_delete"),
+            ]])
+            await update.message.reply_text(
+                f"📌 Sizda tugallanmagan quiz bor!\n"
+                f"📝 <b>{draft['step']}/9</b> ta savolga javob berilgan.\n\n"
+                "Davom etasizmi yoki yangidan boshlaysizmi?",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+            return ST_CREATOR_ANS
+
         picked = random.sample(DEFAULT_QUESTIONS, min(9, len(DEFAULT_QUESTIONS)))
         sessions[user.id] = {
             "mode":            "creating",
@@ -672,7 +945,6 @@ async def creator_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not s or s.get("mode") != "creating":
         return ST_CREATOR_ANS
 
-    # callback_data = "opt_N"
     try:
         idx = int(query.data.split("_")[1])
     except (ValueError, IndexError):
@@ -689,6 +961,16 @@ async def creator_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
     s["step"] += 1
 
+    # Progressni saqlash
+    draft_save(
+        user.id,
+        s["quiz_id"],
+        s["questions"],
+        s["step"],
+        s["creator_answers"],
+        s.get("q10", {}),
+    )
+
     await query.message.reply_text(
         f"✅ <b>{correct}</b> — saqlandi!",
         parse_mode="HTML",
@@ -698,7 +980,6 @@ async def creator_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_creator_question(context, update.effective_chat.id, user.id)
         return ST_CREATOR_ANS
 
-    # 9 ta savol tugadi → Q10
     await query.message.reply_text(
         "🎉 <b>9 ta savolga javob berdingiz!</b> ✅\n\n"
         "➕ Endi <b>10-savolni</b> yozasiz — bu sizning <b>yashirin faktingiz!</b>\n"
@@ -782,23 +1063,52 @@ async def q10_opts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     quiz_id = s["quiz_id"]
     db_save_quiz(quiz_id, user.id, user.first_name, all_questions)
+
+    # Draft o'chirish
+    draft_delete(user.id)
     del sessions[user.id]
 
     bot_username = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_username}?start={quiz_id}"
+    expire_date = (datetime.now() + timedelta(days=QUIZ_EXPIRE_DAYS)).strftime("%d.%m.%Y")
 
+    # Matnli xabar
     await update.message.reply_text(
         "🎊 <b>Viktorinangiz tayyor!</b> 🎉\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔗 <b>Havola:</b>\n{link}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📲 Do'stlaringizga yuboring!\n"
+        f"⏳ Quiz <b>{expire_date}</b> gacha amal qiladi.\n"
+        "📲 Quyidagi posterni do'stlaringizga yuboring!\n"
         "🚫 Siz o'z testingizni ishlay olmaysiz.\n\n"
         "📊 /natijalar — natijalarni ko'rish\n"
         "🔗 /havola — havolangizni olish",
         reply_markup=main_kb(),
         parse_mode="HTML",
     )
+
+    # Poster rasm yuborish
+    try:
+        poster_bytes = make_quiz_poster(user.first_name, quiz_id, link, QUIZ_EXPIRE_DAYS)
+        caption = (
+            f"🧠 <b>{user.first_name}</b>ning quizi!\n\n"
+            f"🔗 {link}\n\n"
+            f"👆 Mana shu rasmni do'stlaringizga <b>forward</b> qiling!\n"
+            f"⏳ Muddati: {expire_date} gacha"
+        )
+        await update.message.reply_photo(
+            photo=io.BytesIO(poster_bytes),
+            caption=caption,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.error(f"Poster error: {e}")
+        # Rasm ishlamasa oddiy havola yuboramiz
+        await update.message.reply_text(
+            f"🔗 Forward qilish uchun havola:\n{link}",
+            reply_markup=main_kb(),
+        )
+
     return ST_MENU
 
 
@@ -905,8 +1215,8 @@ async def leaderboard_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     medals = ["🥇", "🥈", "🥉"]
     text   = f"🏆 <b>{quiz['creator_name']} viktorinasi — Reyting:</b>\n\n"
     for i, row in enumerate(rows):
-        m    = medals[i] if i < 3 else f"{i + 1}."
-        p    = int(row["score"] / row["total"] * 100)
+        m     = medals[i] if i < 3 else f"{i + 1}."
+        p     = int(row["score"] / row["total"] * 100)
         stars = "⭐" * round(p / 20)
         text += f"{m} <b>{row['solver_name']}</b> — {row['score']}/{row['total']} ({p}%) {stars}\n\n"
 
@@ -932,7 +1242,8 @@ async def cmd_natijalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for q in quizzes:
         rows = db_get_scores(q["quiz_id"])
         date = q["created_at"][:10]
-        text += f"🎯 <b>{q['quiz_id']}</b>  📅 <i>{date}</i>\n"
+        exp  = q["expires_at"][:10] if q["expires_at"] else "—"
+        text += f"🎯 <b>{q['quiz_id']}</b>  📅 <i>{date}</i>  ⏳ <i>{exp} gacha</i>\n"
         if not rows:
             text += "  😴 Hali hech kim ishlamagan.\n\n"
             continue
@@ -948,7 +1259,7 @@ async def cmd_natijalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────────────────────
-#  /havola
+#  /havola  —  havola + poster
 # ──────────────────────────────────────────────────────────────
 async def cmd_havola(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user    = update.effective_user
@@ -962,29 +1273,59 @@ async def cmd_havola(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot_username = (await context.bot.get_me()).username
-    text = "🔗 <b>Sizning viktorina havolalaringiz:</b>\n\n"
+
     for q in quizzes:
         link = f"https://t.me/{bot_username}?start={q['quiz_id']}"
+        exp  = q["expires_at"][:10] if q["expires_at"] else "—"
         date = q["created_at"][:10]
-        text += f"📅 <i>{date}</i>\n🔗 {link}\n\n"
 
-    await update.message.reply_text(
-        text + "👆 Havolani do'stlaringizga yuboring! 📲",
-        reply_markup=main_kb(),
-        parse_mode="HTML",
-    )
+        # Matnli xabar
+        await update.message.reply_text(
+            f"📅 <i>{date}</i>  |  ⏳ <i>{exp} gacha</i>\n"
+            f"🔗 {link}",
+            reply_markup=main_kb(),
+            parse_mode="HTML",
+        )
+
+        # Poster rasm
+        try:
+            quiz = db_get_quiz(q["quiz_id"])
+            creator_name = quiz["creator_name"] if quiz else user.first_name
+            poster_bytes = make_quiz_poster(creator_name, q["quiz_id"], link, QUIZ_EXPIRE_DAYS)
+            caption = (
+                f"🧠 <b>{creator_name}</b>ning quizi!\n\n"
+                f"🔗 {link}\n\n"
+                f"👆 Mana shu rasmni <b>forward</b> qiling!\n"
+                f"⏳ Muddati: {exp} gacha"
+            )
+            await update.message.reply_photo(
+                photo=io.BytesIO(poster_bytes),
+                caption=caption,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            log.error(f"Poster error in /havola: {e}")
 
 
 # ──────────────────────────────────────────────────────────────
 #  /bekor
 # ──────────────────────────────────────────────────────────────
 async def cmd_bekor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sessions.pop(update.effective_user.id, None)
+    uid = update.effective_user.id
+    sessions.pop(uid, None)
+    draft_delete(uid)
     await update.message.reply_text(
-        "🚫 Bekor qilindi.\n\n👉 /start bilan qayta boshlang!",
+        "🚫 Bekor qilindi. Draft ham o'chirildi.\n\n👉 /start bilan qayta boshlang!",
         reply_markup=main_kb(),
     )
     return ST_MENU
+
+
+# ──────────────────────────────────────────────────────────────
+#  EXPIRED QUIZ CLEANUP — har 6 soatda ishga tushadi
+# ──────────────────────────────────────────────────────────────
+async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
+    db_delete_expired_quizzes()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1017,7 +1358,8 @@ def main():
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
             ],
             ST_CREATOR_ANS: [
-                CallbackQueryHandler(creator_answer, pattern=r"^opt_\d+$"),
+                CallbackQueryHandler(creator_answer,  pattern=r"^opt_\d+$"),
+                CallbackQueryHandler(draft_callback,  pattern=r"^draft_"),
             ],
             ST_Q10_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, q10_text),
@@ -1029,7 +1371,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, q10_opts),
             ],
             ST_SOLVING: [
-                CallbackQueryHandler(solver_answer, pattern=r"^opt_\d+$"),
+                CallbackQueryHandler(solver_answer,  pattern=r"^opt_\d+$"),
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
             ],
         },
@@ -1044,6 +1386,9 @@ def main():
     app.add_handler(CommandHandler("natijalar",  cmd_natijalar))
     app.add_handler(CommandHandler("havola",     cmd_havola))
     app.add_handler(CommandHandler("statistika", cmd_natijalar))
+
+    # Har 6 soatda eski quizlarni o'chirish
+    app.job_queue.run_repeating(cleanup_expired, interval=6 * 3600, first=60)
 
     log.info("Bot ishga tushdi!")
     app.run_polling(drop_pending_updates=True)
