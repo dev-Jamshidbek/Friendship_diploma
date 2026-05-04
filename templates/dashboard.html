@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Bot — Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg:       #0d0d1a;
+            --surface:  #13132a;
+            --surface2: #1a1a35;
+            --border:   rgba(255,255,255,0.07);
+            --gold:     #d7ac26;
+            --gold2:    #f0c940;
+            --text:     #e8e8f0;
+            --muted:    rgba(255,255,255,0.4);
+            --green:    #4ade80;
+            --blue:     #60a5fa;
+            --purple:   #a78bfa;
+            --red:      #f87171;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh;
+        }
+
+        /* ── Navbar ── */
+        .navbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 32px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gold);
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .refresh-badge {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid rgba(74, 222, 128, 0.2);
+            color: var(--green);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .logout-btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .logout-btn:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+
+        /* ── Layout ── */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 32px 24px;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .page-sub {
+            color: var(--muted);
+            font-size: 13px;
+            margin-bottom: 32px;
+        }
+
+        /* ── Stat Cards ── */
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s;
+        }
+        .card:hover { transform: translateY(-2px); }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+        }
+        .card.gold::before   { background: linear-gradient(90deg, var(--gold), var(--gold2)); }
+        .card.green::before  { background: linear-gradient(90deg, #4ade80, #22d3ee); }
+        .card.blue::before   { background: linear-gradient(90deg, #60a5fa, #a78bfa); }
+        .card.purple::before { background: linear-gradient(90deg, #a78bfa, #f472b6); }
+        .card.red::before    { background: linear-gradient(90deg, #f87171, #fb923c); }
+        .card.cyan::before   { background: linear-gradient(90deg, #22d3ee, #60a5fa); }
+
+        .card-icon {
+            font-size: 28px;
+            margin-bottom: 16px;
+        }
+
+        .card-value {
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+
+        .card-label {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        /* ── Charts Row ── */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        @media (max-width: 900px) {
+            .charts-row { grid-template-columns: 1fr; }
+        }
+
+        .chart-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        .chart-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--text);
+        }
+
+        .chart-wrap {
+            position: relative;
+            height: 220px;
+        }
+
+        /* ── Tables ── */
+        .tables-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        @media (max-width: 900px) {
+            .tables-row { grid-template-columns: 1fr; }
+        }
+
+        .table-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .table-header {
+            padding: 20px 24px;
+            font-size: 15px;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            padding: 10px 16px;
+            text-align: left;
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-green  { background: rgba(74,222,128,0.15);  color: var(--green); }
+        .badge-gold   { background: rgba(215,172,38,0.15);  color: var(--gold2); }
+        .badge-blue   { background: rgba(96,165,250,0.15);  color: var(--blue); }
+        .badge-red    { background: rgba(248,113,113,0.15); color: var(--red); }
+
+        .medal { font-size: 16px; }
+
+        /* ── Recent Games (full width) ── */
+        .full-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 32px;
+        }
+
+        /* ── Footer ── */
+        .footer {
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+            padding: 16px;
+        }
+
+        /* ── Countdown ── */
+        #countdown {
+            font-variant-numeric: tabular-nums;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar">
+    <div class="navbar-brand">
+        🧠 Quiz Bot Dashboard
+    </div>
+    <div class="navbar-right">
+        <span class="refresh-badge">⟳ Auto-refresh: <span id="countdown">60</span>s</span>
+        <a href="/logout" class="logout-btn">Logout →</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="page-title">Overview</div>
+    <div class="page-sub" id="last-updated">Last updated: just now</div>
+
+    <!-- Stat Cards -->
+    <div class="cards" id="cards">
+        <div class="card gold">
+            <div class="card-icon">🎯</div>
+            <div class="card-value" id="total_quizzes">{{ stats.total_quizzes }}</div>
+            <div class="card-label">Total Quizzes</div>
+        </div>
+        <div class="card green">
+            <div class="card-icon">✅</div>
+            <div class="card-value" id="active_quizzes">{{ stats.active_quizzes }}</div>
+            <div class="card-label">Active Quizzes</div>
+        </div>
+        <div class="card blue">
+            <div class="card-icon">👥</div>
+            <div class="card-value" id="total_users">{{ stats.total_users }}</div>
+            <div class="card-label">Unique Players</div>
+        </div>
+        <div class="card purple">
+            <div class="card-icon">✍️</div>
+            <div class="card-value" id="total_creators">{{ stats.total_creators }}</div>
+            <div class="card-label">Quiz Creators</div>
+        </div>
+        <div class="card red">
+            <div class="card-icon">🎮</div>
+            <div class="card-value" id="total_scores">{{ stats.total_scores }}</div>
+            <div class="card-label">Games Played</div>
+        </div>
+        <div class="card cyan">
+            <div class="card-icon">📊</div>
+            <div class="card-value" id="avg_score">{{ stats.avg_score }}%</div>
+            <div class="card-label">Avg Score</div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-row">
+        <div class="chart-box">
+            <div class="chart-title">📈 Games Played — Last 7 Days</div>
+            <div class="chart-wrap">
+                <canvas id="activityChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-box">
+            <div class="chart-title">🎯 Quizzes Created — Last 7 Days</div>
+            <div class="chart-wrap">
+                <canvas id="createdChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tables -->
+    <div class="tables-row">
+        <!-- Top Players -->
+        <div class="table-box">
+            <div class="table-header">🏆 Top Players</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Name</th>
+                        <th>Games</th>
+                        <th>Avg %</th>
+                        <th>Best</th>
+                    </tr>
+                </thead>
+                <tbody id="top-players">
+                {% for i, p in enumerate(stats.top_players) %}
+                <tr>
+                    <td>
+                        {% if i == 0 %}<span class="medal">🥇</span>
+                        {% elif i == 1 %}<span class="medal">🥈</span>
+                        {% elif i == 2 %}<span class="medal">🥉</span>
+                        {% else %}{{ i+1 }}{% endif %}
+                    </td>
+                    <td>{{ p.solver_name }}</td>
+                    <td><span class="badge badge-blue">{{ p.games }}</span></td>
+                    <td>{{ "%.0f"|format(p.avg_pct) }}%</td>
+                    <td><span class="badge badge-gold">{{ "%.0f"|format(p.best_pct) }}%</span></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recent Quizzes -->
+        <div class="table-box">
+            <div class="table-header">🎯 Recent Quizzes</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Creator</th>
+                        <th>Quiz ID</th>
+                        <th>Plays</th>
+                        <th>Expires</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for q in stats.recent_quizzes %}
+                <tr>
+                    <td>{{ q.creator_name }}</td>
+                    <td><code style="color: var(--muted); font-size:11px;">{{ q.quiz_id }}</code></td>
+                    <td><span class="badge badge-green">{{ q.plays }}</span></td>
+                    <td style="font-size:11px; color: var(--muted);">
+                        {{ q.expires_at[:10] if q.expires_at else "—" }}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Games -->
+    <div class="full-box">
+        <div class="table-header">🎮 Recent Games</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Player</th>
+                    <th>Quiz By</th>
+                    <th>Score</th>
+                    <th>Result</th>
+                    <th>Played At</th>
+                </tr>
+            </thead>
+            <tbody id="recent-games">
+            {% for g in stats.recent_games %}
+            <tr>
+                <td>{{ g.solver_name }}</td>
+                <td style="color: var(--muted);">{{ g.creator_name }}</td>
+                <td>{{ g.score }}/{{ g.total }}</td>
+                <td>
+                    {% set pct = (g.score / g.total * 100)|int %}
+                    {% if pct == 100 %}
+                        <span class="badge badge-gold">{{ pct }}% 🏆</span>
+                    {% elif pct >= 70 %}
+                        <span class="badge badge-green">{{ pct }}%</span>
+                    {% elif pct >= 40 %}
+                        <span class="badge badge-blue">{{ pct }}%</span>
+                    {% else %}
+                        <span class="badge badge-red">{{ pct }}%</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:11px; color: var(--muted);">{{ g.played_at[:16] }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="footer">Quiz Bot Admin Dashboard • Auto-refreshes every 60 seconds</div>
+</div>
+
+<script>
+// ── Chart setup ──────────────────────────────────────────────
+const chartDefaults = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+        x: {
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 11 } }
+        },
+        y: {
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 11 }, stepSize: 1 },
+            beginAtZero: true
+        }
+    }
+};
+
+// Activity chart
+const activityData = {{ stats.daily_activity | tojson }};
+const activityChart = new Chart(document.getElementById('activityChart'), {
+    type: 'bar',
+    data: {
+        labels: activityData.map(d => d.date.slice(5)),
+        datasets: [{
+            data: activityData.map(d => d.count),
+            backgroundColor: 'rgba(96, 165, 250, 0.5)',
+            borderColor: '#60a5fa',
+            borderWidth: 2,
+            borderRadius: 6,
+        }]
+    },
+    options: chartDefaults
+});
+
+// Created chart
+const createdData = {{ stats.daily_created | tojson }};
+const createdChart = new Chart(document.getElementById('createdChart'), {
+    type: 'line',
+    data: {
+        labels: createdData.map(d => d.date.slice(5)),
+        datasets: [{
+            data: createdData.map(d => d.count),
+            borderColor: '#d7ac26',
+            backgroundColor: 'rgba(215, 172, 38, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointBackgroundColor: '#d7ac26',
+            pointRadius: 4,
+        }]
+    },
+    options: chartDefaults
+});
+
+// ── Auto-refresh every 60 seconds ───────────────────────────
+let countdown = 60;
+const countdownEl = document.getElementById('countdown');
+const lastUpdatedEl = document.getElementById('last-updated');
+
+setInterval(() => {
+    countdown--;
+    countdownEl.textContent = countdown;
+    if (countdown <= 0) {
+        countdown = 60;
+        fetchStats();
+    }
+}, 1000);
+
+async function fetchStats() {
+    try {
+        const res  = await fetch('/api/stats');
+        const data = await res.json();
+
+        // Cards
+        document.getElementById('total_quizzes').textContent  = data.total_quizzes;
+        document.getElementById('active_quizzes').textContent = data.active_quizzes;
+        document.getElementById('total_users').textContent    = data.total_users;
+        document.getElementById('total_creators').textContent = data.total_creators;
+        document.getElementById('total_scores').textContent   = data.total_scores;
+        document.getElementById('avg_score').textContent      = data.avg_score + '%';
+
+        // Charts
+        activityChart.data.labels   = data.daily_activity.map(d => d.date.slice(5));
+        activityChart.data.datasets[0].data = data.daily_activity.map(d => d.count);
+        activityChart.update();
+
+        createdChart.data.labels    = data.daily_created.map(d => d.date.slice(5));
+        createdChart.data.datasets[0].data = data.daily_created.map(d => d.count);
+        createdChart.update();
+
+        // Last updated
+        const now = new Date();
+        lastUpdatedEl.textContent = 'Last updated: ' +
+            now.getHours().toString().padStart(2,'0') + ':' +
+            now.getMinutes().toString().padStart(2,'0') + ':' +
+            now.getSeconds().toString().padStart(2,'0');
+
+    } catch(e) {
+        console.error('Stats fetch error:', e);
+    }
+}
+</script>
+</body>
+</html>
