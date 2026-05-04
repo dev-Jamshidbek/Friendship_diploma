@@ -1341,6 +1341,82 @@ async def cmd_havola(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.error(f"Poster error in /havola: {e}")
 
 
+
+ADMIN_ID = 5069627371
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun!")
+        return
+
+    with db() as c:
+        total_quizzes  = c.execute("SELECT COUNT(*) FROM quizzes").fetchone()[0]
+        total_games    = c.execute("SELECT COUNT(*) FROM scores").fetchone()[0]
+        total_players  = c.execute("SELECT COUNT(DISTINCT solver_id) FROM scores").fetchone()[0]
+        total_creators = c.execute("SELECT COUNT(DISTINCT creator_id) FROM quizzes").fetchone()[0]
+
+        avg = c.execute(
+            "SELECT AVG(CAST(score AS FLOAT)/total*100) FROM scores"
+        ).fetchone()[0]
+        avg_score = round(avg, 1) if avg else 0
+
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        active = c.execute(
+            "SELECT COUNT(*) FROM quizzes WHERE expires_at > ?", (now,)
+        ).fetchone()[0]
+
+        top_players = c.execute("""
+            SELECT solver_name,
+                   COUNT(*) as games,
+                   AVG(CAST(score AS FLOAT)/total*100) as avg_pct
+            FROM scores
+            GROUP BY solver_id
+            ORDER BY avg_pct DESC
+            LIMIT 5
+        """).fetchall()
+
+        recent_games = c.execute("""
+            SELECT s.solver_name, s.score, s.total,
+                   CAST(s.score AS FLOAT)/s.total*100 as pct,
+                   s.played_at
+            FROM scores s
+            ORDER BY s.played_at DESC
+            LIMIT 5
+        """).fetchall()
+
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    top_text = ""
+    for i, p in enumerate(top_players):
+        top_text += f"  {medals[i]} {p['solver_name']} — {round(p['avg_pct'])}% ({p['games']} o'yin)\n"
+
+    recent_text = ""
+    for g in recent_games:
+        pct = round(g["pct"])
+        emoji = "🏆" if pct == 100 else "✅" if pct >= 70 else "📊"
+        recent_text += f"  {emoji} {g['solver_name']} — {g['score']}/{g['total']} ({pct}%) | {g['played_at'][:10]}\n"
+
+    text = f"""📊 <b>BOT STATISTIKASI</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 Jami quizlar: <b>{total_quizzes}</b>
+✅ Aktiv quizlar: <b>{active}</b>
+✍️ Quiz yaratuvchilar: <b>{total_creators}</b>
+👥 Jami o'yinchilar: <b>{total_players}</b>
+🎮 Jami o'yinlar: <b>{total_games}</b>
+📈 O'rtacha natija: <b>{avg_score}%</b>
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🏆 <b>Top 5 o'yinchi:</b>
+{top_text}
+━━━━━━━━━━━━━━━━━━━━━━━
+🕐 <b>So'nggi 5 o'yin:</b>
+{recent_text}
+━━━━━━━━━━━━━━━━━━━━━━━
+🕐 <i>{datetime.now().strftime("%d.%m.%Y %H:%M")}</i>"""
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
 # ──────────────────────────────────────────────────────────────
 #  /bekor
 # ──────────────────────────────────────────────────────────────
@@ -1422,6 +1498,7 @@ def main():
     app.add_handler(CommandHandler("natijalar",  cmd_natijalar))
     app.add_handler(CommandHandler("havola",     cmd_havola))
     app.add_handler(CommandHandler("statistika", cmd_natijalar))
+    app.add_handler(CommandHandler("stats", cmd_stats))
 
     # Har 6 soatda eski quizlarni o'chirish
     app.job_queue.run_repeating(cleanup_expired, interval=6 * 3600, first=60)
