@@ -257,6 +257,14 @@ def init_db():
             q10          TEXT DEFAULT '{}',
             updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS users (
+    user_id    INTEGER PRIMARY KEY,
+    username   TEXT,
+    first_name TEXT,
+    last_name  TEXT,
+    joined_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         """)
         # expires_at ustunini eski DBga qo'shish (migration)
         try:
@@ -410,6 +418,33 @@ def draft_load(user_id):
 def draft_delete(user_id):
     with db() as c:
         c.execute("DELETE FROM draft_sessions WHERE user_id=?", (user_id,))
+
+
+def db_save_user(user):
+    """Foydalanuvchini DB ga saqlash yoki yangilash."""
+    with db() as c:
+        c.execute("""
+            INSERT INTO users (user_id, username, first_name, last_name, last_seen)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name,
+                last_name=excluded.last_name,
+                last_seen=excluded.last_seen
+        """, (
+            user.id,
+            user.username or "",
+            user.first_name or "",
+            user.last_name or "",
+            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+
+def db_get_all_users():
+    """Barcha foydalanuvchilarni qaytaradi."""
+    with db() as c:
+        return c.execute(
+            "SELECT user_id FROM users"
+        ).fetchall()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -570,59 +605,56 @@ def _rf():
 
 
 def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
-    W, H = 900, 600
+    W, H = 1280, 720
     img  = Image.new("RGB", (W, H), color=(18, 10, 40))
     draw = ImageDraw.Draw(img)
 
-    # Gradient fon
     for y in range(H):
-        r = int(18 + (30 - 18) * y / H)
-        g = int(10 + (15 - 10) * y / H)
-        b = int(40 + (80 - 40) * y / H)
+        r = int(18 + (35 - 18) * y / H)
+        g = int(10 + (18 - 10) * y / H)
+        b = int(40 + (90 - 40) * y / H)
         draw.line([(0, y), (W, y)], fill=(r, g, b))
 
-    # Border
     gold = (215, 172, 38)
-    draw.rectangle([12, 12, W - 13, H - 13], outline=gold, width=3)
-    draw.rectangle([22, 22, W - 23, H - 23], outline=gold, width=1)
+    draw.rectangle([15, 15, W-16, H-16], outline=gold, width=4)
+    draw.rectangle([26, 26, W-27, H-27], outline=gold, width=1)
 
-    # Fontlar
     try:
-        fb = ImageFont.truetype(FONT_BOLD, 48)
-        fm = ImageFont.truetype(FONT_BOLD, 28)
-        fs = ImageFont.truetype(FONT_REG,  22)
-        ft = ImageFont.truetype(FONT_REG,  17)
+        fb = ImageFont.truetype(FONT_BOLD, 72)
+        fm = ImageFont.truetype(FONT_BOLD, 42)
+        fs = ImageFont.truetype(FONT_REG,  32)
+        ft = ImageFont.truetype(FONT_REG,  24)
     except Exception:
         fb = fm = fs = ft = ImageFont.load_default()
 
     # Sarlavha
-    draw.text((W // 2, 60),  "🏆 SERTIFIKAT",
+    draw.text((W//2, 90),  "🏆 SERTIFIKAT",
               font=fb, fill=(245, 218, 88), anchor="mm")
-    draw.line([(80, 100), (W - 80, 100)], fill=gold, width=1)
+    draw.line([(120, 145), (W-120, 145)], fill=gold, width=1)
 
     # Taqdim etiladi
-    draw.text((W // 2, 135), "Ushbu sertifikat hurmat bilan taqdim etiladi:",
+    draw.text((W//2, 190), "Ushbu sertifikat hurmat bilan taqdim etiladi:",
               font=ft, fill=(170, 170, 210), anchor="mm")
 
     # Ism
-    name_d = solver_name[:28] + ("..." if len(solver_name) > 28 else "")
-    draw.text((W // 2, 195), name_d,
+    name_d = solver_name[:30] + ("..." if len(solver_name) > 30 else "")
+    draw.text((W//2, 270), name_d,
               font=fm, fill=(245, 218, 88), anchor="mm")
     nw = fm.getlength(name_d)
-    draw.line([(W // 2 - nw // 2, 215), (W // 2 + nw // 2, 215)], fill=gold, width=1)
+    draw.line([(W//2 - nw//2, 298), (W//2 + nw//2, 298)], fill=gold, width=1)
 
     # Tavsif
-    draw.text((W // 2, 255),
+    draw.text((W//2, 345),
               f'"{creator_name}" haqidagi viktorinani muvaffaqiyatli yakunladi',
               font=ft, fill=(200, 200, 230), anchor="mm")
 
     # Natija qutisi
-    draw.rounded_rectangle([W // 2 - 110, 290, W // 2 + 110, 390],
-                            radius=14, fill=(25, 15, 55), outline=gold, width=2)
+    draw.rounded_rectangle([W//2-160, 385, W//2+160, 530],
+                            radius=20, fill=(25, 15, 55), outline=gold, width=2)
     pct = int(score / total * 100)
-    draw.text((W // 2, 318), "NATIJA",   font=ft, fill=(170, 170, 210), anchor="mm")
-    draw.text((W // 2, 352), f"{score}/{total}", font=fm, fill=(245, 218, 88), anchor="mm")
-    draw.text((W // 2, 378), f"{pct}% to'g'ri", font=ft, fill=(130, 220, 130), anchor="mm")
+    draw.text((W//2, 420), "NATIJA", font=ft, fill=(170, 170, 210), anchor="mm")
+    draw.text((W//2, 472), f"{score}/{total}", font=fm, fill=(245, 218, 88), anchor="mm")
+    draw.text((W//2, 515), f"{pct}% to'g'ri", font=ft, fill=(130, 220, 130), anchor="mm")
 
     # Baho
     if pct == 100:
@@ -634,14 +666,13 @@ def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
     else:
         lbl, lc = "DAVOM ETING! ⭐⭐", (230, 160, 90)
 
-    draw.text((W // 2, 430), lbl, font=fs, fill=lc, anchor="mm")
+    draw.text((W//2, 578), lbl, font=fs, fill=lc, anchor="mm")
 
-    # Pastki info
-    draw.line([(80, 470), (W - 80, 470)], fill=gold, width=1)
-    draw.text((W // 2, 498),
+    draw.line([(120, 618), (W-120, 618)], fill=gold, width=1)
+    draw.text((W//2, 648),
               f"Sana: {datetime.now().strftime('%d.%m.%Y')}   |   Quiz ID: {quiz_id}",
               font=ft, fill=(120, 120, 160), anchor="mm")
-    draw.text((W // 2, 530),
+    draw.text((W//2, 682),
               "Meni qanchalik yaxshi bilasiz? — Quiz Bot",
               font=ft, fill=(100, 100, 140), anchor="mm")
 
@@ -717,7 +748,7 @@ async def show_solver_question(context, chat_id, user_id):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
-
+    db_save_user(user)
     # Deep link — do'st testni ishlaydi
     if args and args[0].startswith("quiz_"):
         quiz_id = args[0]
@@ -1271,23 +1302,33 @@ async def cmd_natijalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    medals = ["🥇", "🥈", "🥉"]
-    text   = "📊 <b>Sizning viktorinalaring natijalari:</b>\n\n"
+    text = "📊 <b>SIZNING VIKTORINALARINGIZ</b>\n"
+
     for q in quizzes:
-        rows = db_get_scores(q["quiz_id"])
-        date = q["created_at"][:10]
-        exp  = q["expires_at"][:10] if q["expires_at"] else "—"
-        text += f"🎯 <b>{q['quiz_id']}</b>  📅 <i>{date}</i>  ⏳ <i>{exp} gacha</i>\n"
+        rows     = db_get_scores(q["quiz_id"])
+        date     = q["created_at"][:10]
+        exp      = q["expires_at"][:10] if q["expires_at"] else "—"
+        plays    = len(rows)
+
+        text += f"\n┌─────────────────────────\n"
+        text += f"│ 📅 <b>{date}</b>  ⏳ <i>{exp} gacha</i>\n"
+        text += f"│ 🎮 Jami o'yinlar: <b>{plays}</b>\n"
+        text += f"└─────────────────────────\n"
+
         if not rows:
-            text += "  😴 Hali hech kim ishlamagan.\n\n"
+            text += "  😴 <i>Hali hech kim ishlamagan</i>\n"
             continue
+
+        medals = ["🥇", "🥈", "🥉"]
         for i, row in enumerate(rows[:5]):
-            m = medals[i] if i < 3 else f"  {i + 1}."
-            p = int(row["score"] / row["total"] * 100)
-            text += f"  {m} {row['solver_name']} — {row['score']}/{row['total']} ({p}%)\n"
+            m    = medals[i] if i < 3 else f"{i+1}."
+            p    = int(row["score"] / row["total"] * 100)
+            bar  = "█" * (p // 20) + "░" * (5 - p // 20)
+            text += f"  {m} <b>{row['solver_name']}</b>\n"
+            text += f"      {bar} {row['score']}/{row['total']} ({p}%)\n"
+
         if len(rows) > 5:
-            text += f"  👥 ... va yana {len(rows) - 5} kishi\n"
-        text += "\n"
+            text += f"\n  👥 <i>... va yana {len(rows)-5} kishi</i>\n"
 
     await update.message.reply_text(text, reply_markup=main_kb(), parse_mode="HTML")
 
@@ -1344,6 +1385,8 @@ async def cmd_havola(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ADMIN_ID = 5069627371
 
+ADMIN_ID = 5069627371
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun!")
@@ -1365,16 +1408,41 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "SELECT COUNT(*) FROM quizzes WHERE expires_at > ?", (now,)
         ).fetchone()[0]
 
+        # Kunlik o'yinlar (oxirgi 7 kun)
+        daily_text = ""
+        for i in range(6, -1, -1):
+            day   = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+            count = c.execute(
+                "SELECT COUNT(*) FROM scores WHERE DATE(played_at)=?", (day,)
+            ).fetchone()[0]
+            bar   = "█" * count if count <= 10 else "█" * 10 + f"(+{count-10})"
+            label = "Bugun" if i == 0 else day[5:]
+            daily_text += f"  {label}: {bar} <b>{count}</b>\n"
+
+        # Top 5 o'yinchi
         top_players = c.execute("""
-            SELECT solver_name,
+            SELECT solver_name, solver_id,
                    COUNT(*) as games,
-                   AVG(CAST(score AS FLOAT)/total*100) as avg_pct
+                   AVG(CAST(score AS FLOAT)/total*100) as avg_pct,
+                   MAX(CAST(score AS FLOAT)/total*100) as best_pct
             FROM scores
             GROUP BY solver_id
             ORDER BY avg_pct DESC
             LIMIT 5
         """).fetchall()
 
+        # Foydalanuvchilar jadvali (oxirgi 10)
+        users = c.execute("""
+            SELECT solver_name, solver_id,
+                   COUNT(*) as games,
+                   MAX(played_at) as last_played
+            FROM scores
+            GROUP BY solver_id
+            ORDER BY last_played DESC
+            LIMIT 10
+        """).fetchall()
+
+        # So'nggi 5 o'yin
         recent_games = c.execute("""
             SELECT s.solver_name, s.score, s.total,
                    CAST(s.score AS FLOAT)/s.total*100 as pct,
@@ -1385,29 +1453,39 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """).fetchall()
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+
     top_text = ""
     for i, p in enumerate(top_players):
-        top_text += f"  {medals[i]} {p['solver_name']} — {round(p['avg_pct'])}% ({p['games']} o'yin)\n"
+        top_text += f"  {medals[i]} <b>{p['solver_name']}</b> — {round(p['avg_pct'])}% avg | best: {round(p['best_pct'])}% | {p['games']} o'yin\n"
+
+    users_text = ""
+    for i, u in enumerate(users):
+        last = u["last_played"][:10] if u["last_played"] else "—"
+        users_text += f"  {i+1}. <b>{u['solver_name']}</b> — {u['games']} o'yin | oxirgi: {last}\n"
 
     recent_text = ""
     for g in recent_games:
-        pct = round(g["pct"])
-        emoji = "🏆" if pct == 100 else "✅" if pct >= 70 else "📊"
-        recent_text += f"  {emoji} {g['solver_name']} — {g['score']}/{g['total']} ({pct}%) | {g['played_at'][:10]}\n"
+        pct   = round(g["pct"])
+        emoji = "🏆" if pct == 100 else "✅" if pct >= 70 else "📊" if pct >= 40 else "❌"
+        recent_text += f"  {emoji} <b>{g['solver_name']}</b> — {g['score']}/{g['total']} ({pct}%) | {g['played_at'][:10]}\n"
 
     text = f"""📊 <b>BOT STATISTIKASI</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
-
-🎯 Jami quizlar: <b>{total_quizzes}</b>
-✅ Aktiv quizlar: <b>{active}</b>
-✍️ Quiz yaratuvchilar: <b>{total_creators}</b>
-👥 Jami o'yinchilar: <b>{total_players}</b>
+🎯 Jami quizlar: <b>{total_quizzes}</b>  ✅ Aktiv: <b>{active}</b>
+✍️ Yaratuvchilar: <b>{total_creators}</b>
+👥 O'yinchilar: <b>{total_players}</b>
 🎮 Jami o'yinlar: <b>{total_games}</b>
 📈 O'rtacha natija: <b>{avg_score}%</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+📅 <b>Kunlik o'yinlar (oxirgi 7 kun):</b>
+{daily_text}
+━━━━━━━━━━━━━━━━━━━━━━━
 🏆 <b>Top 5 o'yinchi:</b>
 {top_text}
+━━━━━━━━━━━━━━━━━━━━━━━
+👥 <b>So'nggi faol foydalanuvchilar:</b>
+{users_text}
 ━━━━━━━━━━━━━━━━━━━━━━━
 🕐 <b>So'nggi 5 o'yin:</b>
 {recent_text}
@@ -1415,6 +1493,236 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🕐 <i>{datetime.now().strftime("%d.%m.%Y %H:%M")}</i>"""
 
     await update.message.reply_text(text, parse_mode="HTML")
+
+
+# ── BROADCAST ────────────────────────────────────────────────
+
+# Broadcast holati
+broadcast_sessions: dict = {}
+
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Foydalanish:
+    /broadcast — boshlash (menyu chiqadi)
+    """
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun!")
+        return
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Faqat matn",        callback_data="bc_text")],
+        [InlineKeyboardButton("🖼 Matn + Rasm",        callback_data="bc_photo")],
+        [InlineKeyboardButton("🔗 Matn + Rasm + Tugma", callback_data="bc_photo_btn")],
+        [InlineKeyboardButton("❌ Bekor qilish",       callback_data="bc_cancel")],
+    ])
+    await update.message.reply_text(
+        "📢 <b>Broadcast — Xabar turi tanlang:</b>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user  = update.effective_user
+
+    if user.id != ADMIN_ID:
+        return
+
+    data = query.data
+
+    if data == "bc_cancel":
+        broadcast_sessions.pop(user.id, None)
+        await query.message.reply_text("❌ Bekor qilindi.")
+        return
+
+    if data == "bc_text":
+        broadcast_sessions[user.id] = {"type": "text"}
+        await query.message.reply_text(
+            "📝 Xabar matnini yozing:\n\n"
+            "<i>HTML formatda yozishingiz mumkin: "
+            "&lt;b&gt;qalin&lt;/b&gt;, &lt;i&gt;kursiv&lt;/i&gt;</i>",
+            parse_mode="HTML",
+        )
+
+    elif data == "bc_photo":
+        broadcast_sessions[user.id] = {"type": "photo"}
+        await query.message.reply_text(
+            "🖼 Avval <b>rasm</b> yuboring:",
+            parse_mode="HTML",
+        )
+
+    elif data == "bc_photo_btn":
+        broadcast_sessions[user.id] = {"type": "photo_btn"}
+        await query.message.reply_text(
+            "🖼 Avval <b>rasm</b> yuboring:",
+            parse_mode="HTML",
+        )
+
+
+async def broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+    if user.id not in broadcast_sessions:
+        return
+
+    s = broadcast_sessions[user.id]
+
+    # Rasm qabul qilish
+    if update.message.photo and "photo" not in s:
+        s["photo"] = update.message.photo[-1].file_id
+
+        if s["type"] == "photo":
+            await update.message.reply_text(
+                "✅ Rasm qabul qilindi!\n\n📝 Endi xabar matnini yozing:",
+            )
+        elif s["type"] == "photo_btn":
+            await update.message.reply_text(
+                "✅ Rasm qabul qilindi!\n\n📝 Endi xabar matnini yozing:",
+            )
+        return
+
+    # Matn qabul qilish
+    if update.message.text and "text" not in s:
+        s["text"] = update.message.text
+
+        if s["type"] == "photo_btn":
+            await update.message.reply_text(
+                "🔗 Endi tugma uchun ma'lumot yozing:\n\n"
+                "<i>Format: Tugma nomi | https://link.com</i>\n"
+                "Masalan: <code>Botni ochish | https://t.me/botusername</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Yuborishga tayyor — preview
+        await show_broadcast_preview(update, context, s)
+        return
+
+    # Tugma ma'lumotini qabul qilish
+    if update.message.text and s["type"] == "photo_btn" and "text" in s and "btn" not in s:
+        parts = update.message.text.split("|")
+        if len(parts) != 2:
+            await update.message.reply_text(
+                "⚠️ Format noto'g'ri!\n"
+                "Masalan: <code>Botni ochish | https://t.me/botusername</code>",
+                parse_mode="HTML",
+            )
+            return
+        s["btn"] = {"text": parts[0].strip(), "url": parts[1].strip()}
+        await show_broadcast_preview(update, context, s)
+
+
+async def show_broadcast_preview(update, context, s):
+    """Broadcast preview va tasdiqlash."""
+    user = update.effective_user
+    users = db_get_all_users()
+    count = len(users)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Yuborish ({count} kishi)", callback_data="bc_confirm")],
+        [InlineKeyboardButton("❌ Bekor qilish", callback_data="bc_cancel")],
+    ])
+
+    await update.message.reply_text(
+        f"👁 <b>Preview:</b>",
+        parse_mode="HTML",
+    )
+
+    # Preview yuborish
+    btn_kb = None
+    if "btn" in s:
+        btn_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(s["btn"]["text"], url=s["btn"]["url"])
+        ]])
+
+    if s["type"] == "text":
+        await update.message.reply_text(
+            s["text"], parse_mode="HTML",
+        )
+    elif s["type"] in ("photo", "photo_btn"):
+        await update.message.reply_photo(
+            photo=s["photo"],
+            caption=s.get("text", ""),
+            parse_mode="HTML",
+            reply_markup=btn_kb,
+        )
+
+    await update.message.reply_text(
+        f"📢 Yuqoridagi xabar <b>{count} ta</b> foydalanuvchiga yuboriladi.\n\n"
+        "Tasdiqlaysizmi?",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user  = update.effective_user
+
+    if user.id != ADMIN_ID:
+        return
+
+    if query.data == "bc_cancel":
+        broadcast_sessions.pop(user.id, None)
+        await query.message.reply_text("❌ Bekor qilindi.")
+        return
+
+    if query.data != "bc_confirm":
+        return
+
+    s     = broadcast_sessions.get(user.id)
+    if not s:
+        return
+
+    users   = db_get_all_users()
+    success = 0
+    failed  = 0
+
+    btn_kb = None
+    if "btn" in s:
+        btn_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(s["btn"]["text"], url=s["btn"]["url"])
+        ]])
+
+    await query.message.reply_text(
+        f"📤 Yuborilmoqda... <b>{len(users)}</b> ta foydalanuvchi",
+        parse_mode="HTML",
+    )
+
+    for row in users:
+        uid = row["user_id"]
+        try:
+            if s["type"] == "text":
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=s["text"],
+                    parse_mode="HTML",
+                )
+            elif s["type"] in ("photo", "photo_btn"):
+                await context.bot.send_photo(
+                    chat_id=uid,
+                    photo=s["photo"],
+                    caption=s.get("text", ""),
+                    parse_mode="HTML",
+                    reply_markup=btn_kb,
+                )
+            success += 1
+        except Exception:
+            failed += 1
+
+    broadcast_sessions.pop(user.id, None)
+
+    await query.message.reply_text(
+        f"✅ <b>Broadcast tugadi!</b>\n\n"
+        f"📨 Yuborildi: <b>{success}</b>\n"
+        f"❌ Xatolik: <b>{failed}</b>",
+        parse_mode="HTML",
+    )
+
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1465,9 +1773,12 @@ def main():
         states={
             ST_MENU: [
                 MessageHandler(filters.Regex(MENU_PATTERN), menu_handler),
+                MessageHandler(filters.PHOTO & ~filters.COMMAND, broadcast_input),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input),
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
-                CallbackQueryHandler(draft_callback, pattern=r"^delete_old_"),  # ← yangi
-                CallbackQueryHandler(draft_callback, pattern=r"^cancel_create$"),  # ← yangi
+                CallbackQueryHandler(draft_callback, pattern=r"^(delete_old_|cancel_create)"),
+                CallbackQueryHandler(broadcast_callback, pattern=r"^bc_(text|photo|photo_btn|cancel)$"),
+                CallbackQueryHandler(broadcast_confirm, pattern=r"^bc_(confirm|cancel)$"),
             ],
             ST_CREATOR_ANS: [
                 CallbackQueryHandler(creator_answer,  pattern=r"^opt_\d+$"),
@@ -1499,6 +1810,7 @@ def main():
     app.add_handler(CommandHandler("havola",     cmd_havola))
     app.add_handler(CommandHandler("statistika", cmd_natijalar))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
 
     # Har 6 soatda eski quizlarni o'chirish
     app.job_queue.run_repeating(cleanup_expired, interval=6 * 3600, first=60)
