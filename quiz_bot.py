@@ -1773,8 +1773,6 @@ def main():
         states={
             ST_MENU: [
                 MessageHandler(filters.Regex(MENU_PATTERN), menu_handler),
-                MessageHandler(filters.PHOTO & ~filters.COMMAND, broadcast_input),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input),
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
                 CallbackQueryHandler(draft_callback, pattern=r"^(delete_old_|cancel_create)"),
                 CallbackQueryHandler(broadcast_callback, pattern=r"^bc_(text|photo|photo_btn|cancel)$"),
@@ -1811,6 +1809,9 @@ def main():
     app.add_handler(CommandHandler("statistika", cmd_natijalar))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, broadcast_input))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input))
 
     # Har 6 soatda eski quizlarni o'chirish
     app.job_queue.run_repeating(cleanup_expired, interval=6 * 3600, first=60)
