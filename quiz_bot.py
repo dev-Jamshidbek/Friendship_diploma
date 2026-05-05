@@ -1775,8 +1775,7 @@ def main():
                 MessageHandler(filters.Regex(MENU_PATTERN), menu_handler),
                 CallbackQueryHandler(leaderboard_cb, pattern=r"^lb_"),
                 CallbackQueryHandler(draft_callback, pattern=r"^(delete_old_|cancel_create)"),
-                CallbackQueryHandler(broadcast_callback, pattern=r"^bc_(text|photo|photo_btn|cancel)$"),
-                CallbackQueryHandler(broadcast_confirm, pattern=r"^bc_(confirm|cancel)$"),
+
             ],
             ST_CREATOR_ANS: [
                 CallbackQueryHandler(creator_answer,  pattern=r"^opt_\d+$"),
@@ -1810,6 +1809,9 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CallbackQueryHandler(broadcast_callback, pattern=r"^bc_(text|photo|photo_btn|cancel)$"))
+    app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern=r"^bc_(confirm|cancel)$"))
+    app.add_handler(MessageHandler(filters.PHOTO, broadcast_input))
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, broadcast_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input))
 
