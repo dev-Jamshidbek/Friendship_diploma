@@ -16,20 +16,19 @@
 ╚══════════════════════════════════════════════════════════════╝
 """
 
+
 import io
 import json
 import logging
+import math
 import random
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
 
 from PIL import Image, ImageDraw, ImageFont
-from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas as rl_canvas
-
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -606,78 +605,166 @@ def _rf():
 
 def make_certificate(solver_name, creator_name, score, total, quiz_id) -> bytes:
     W, H = 1280, 720
-    img  = Image.new("RGB", (W, H), color=(18, 10, 40))
+    img  = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
 
+    # ── Gradient fon (oltin → turqoise) ──
     for y in range(H):
-        r = int(18 + (35 - 18) * y / H)
-        g = int(10 + (18 - 10) * y / H)
-        b = int(40 + (90 - 40) * y / H)
+        t = y / H
+        r = int(10  + (0   - 10)  * t)
+        g = int(20  + (180 - 20)  * t)
+        b = int(60  + (200 - 60)  * t)
         draw.line([(0, y), (W, y)], fill=(r, g, b))
 
-    gold = (215, 172, 38)
-    draw.rectangle([15, 15, W-16, H-16], outline=gold, width=4)
-    draw.rectangle([26, 26, W-27, H-27], outline=gold, width=1)
+    for x in range(W):
+        t = x / W
+        r = int(180 + (10  - 180) * t)
+        g = int(140 + (200 - 140) * t)
+        b = int(0   + (180 - 0)   * t)
+        alpha = 80
+        cur = img.getpixel((x, H // 2))
+        blended = tuple(int(c * (1 - alpha/255) + n * (alpha/255))
+                        for c, n in zip(cur, (r, g, b)))
+        for y in range(H):
+            base = img.getpixel((x, y))
+            t2   = abs(y - H//2) / (H//2)
+            mix  = int(alpha * (1 - t2))
+            px   = tuple(int(b*(1-mix/255) + n*(mix/255))
+                         for b, n in zip(base, (r, g, b)))
+            draw.point((x, y), fill=px)
 
+    # ── Naqshli fon (hexagon pattern) ──
+    pat_color = (255, 255, 255, 18)
+    step = 60
+    for row in range(-1, H // step + 2):
+        for col in range(-1, W // step + 2):
+            cx = col * step + (step // 2 if row % 2 else 0)
+            cy = row * step
+            r6 = 22
+            points = [
+                (cx + r6 * (0.866 * (i % 2 == 0 and 1 or -1)
+                            if i in [1,2,4,5] else 0),
+                 cy + r6 * (-1 if i == 0 else 1 if i == 3
+                            else -0.5 if i in [1,5] else 0.5))
+                for i in range(6)
+            ]
+            pts = []
+            for i in range(6):
+                angle = 60 * i - 30
+                import math
+                px2 = cx + r6 * math.cos(math.radians(angle))
+                py2 = cy + r6 * math.sin(math.radians(angle))
+                pts.append((px2, py2))
+            draw.polygon(pts, outline=(255, 255, 255, 30))
+
+    # ── Tashqi chegara ──
+    gold  = (255, 215, 80)
+    gold2 = (255, 180, 40)
+    draw.rectangle([12, 12, W-13, H-13], outline=gold,  width=4)
+    draw.rectangle([22, 22, W-23, H-23], outline=gold2, width=1)
+
+    # ── Burchak bezaklari ──
+    cs = 36
+    for (x1, y1, x2, y2) in [
+        (12, 12, 12+cs, 12),   (12, 12, 12, 12+cs),
+        (W-13, 12, W-13-cs, 12), (W-13, 12, W-13, 12+cs),
+        (12, H-13, 12+cs, H-13), (12, H-13, 12, H-13-cs),
+        (W-13, H-13, W-13-cs, H-13), (W-13, H-13, W-13, H-13-cs),
+    ]:
+        draw.line([(x1, y1), (x2, y2)], fill=gold, width=3)
+
+    # ── Muhur (medal) ──
+    import math
+    mx, my, mr = W//2, 108, 52
+    # Tashqi yulduz
+    for i in range(12):
+        angle_out = math.radians(i * 30)
+        angle_in  = math.radians(i * 30 + 15)
+        ox = mx + mr * math.cos(angle_out)
+        oy = my + mr * math.sin(angle_out)
+        ix = mx + (mr-14) * math.cos(angle_in)
+        iy = my + (mr-14) * math.sin(angle_in)
+        draw.line([(mx, my), (ox, oy)], fill=gold, width=2)
+    draw.ellipse([mx-mr, my-mr, mx+mr, my+mr], outline=gold, width=3)
+    draw.ellipse([mx-mr+8, my-mr+8, mx+mr-8, my+mr-8],
+                 fill=(255, 215, 80, 180), outline=gold2, width=1)
+
+    # ── Fontlar ──
     try:
-        fb = ImageFont.truetype(FONT_BOLD, 72)
-        fm = ImageFont.truetype(FONT_BOLD, 42)
-        fs = ImageFont.truetype(FONT_REG,  32)
-        ft = ImageFont.truetype(FONT_REG,  24)
+        fb  = ImageFont.truetype(FONT_BOLD, 30)
+        fm  = ImageFont.truetype(FONT_BOLD, 46)
+        fs  = ImageFont.truetype(FONT_REG,  28)
+        ft  = ImageFont.truetype(FONT_REG,  22)
+        fxl = ImageFont.truetype(FONT_BOLD, 90)
     except Exception:
-        fb = fm = fs = ft = ImageFont.load_default()
+        fb = fm = fs = ft = fxl = ImageFont.load_default()
 
-    # Sarlavha
-    draw.text((W//2, 90),  "🏆 SERTIFIKAT",
-              font=fb, fill=(245, 218, 88), anchor="mm")
-    draw.line([(120, 145), (W-120, 145)], fill=gold, width=1)
+    # ── Muhur ichidagi matn ──
+    draw.text((mx, my), "🏆", font=fb, fill=(20, 10, 40), anchor="mm")
 
-    # Taqdim etiladi
-    draw.text((W//2, 190), "Ushbu sertifikat hurmat bilan taqdim etiladi:",
-              font=ft, fill=(170, 170, 210), anchor="mm")
+    # ── SERTIFIKAT sarlavhasi ──
+    draw.text((W//2, 195), "S E R T I F I K A T",
+              font=fm, fill=(255, 215, 80), anchor="mm")
 
-    # Ism
-    name_d = solver_name[:30] + ("..." if len(solver_name) > 30 else "")
-    draw.text((W//2, 270), name_d,
-              font=fm, fill=(245, 218, 88), anchor="mm")
+    # ── Chiziq ──
+    draw.line([(120, 228), (W-120, 228)], fill=gold2, width=1)
+
+    # ── Taqdim etiladi ──
+    draw.text((W//2, 258),
+              "Ushbu sertifikat hurmat bilan taqdim etiladi:",
+              font=ft, fill=(220, 240, 255), anchor="mm")
+
+    # ── Ism ──
+    name_d = solver_name[:28] + ("..." if len(solver_name) > 28 else "")
+    draw.text((W//2, 310), name_d,
+              font=fm, fill=(255, 255, 255), anchor="mm")
     nw = fm.getlength(name_d)
-    draw.line([(W//2 - nw//2, 298), (W//2 + nw//2, 298)], fill=gold, width=1)
+    draw.line([(W//2 - nw//2, 335), (W//2 + nw//2, 335)],
+              fill=gold, width=1)
 
-    # Tavsif
-    draw.text((W//2, 345),
+    # ── Tavsif ──
+    draw.text((W//2, 368),
               f'"{creator_name}" haqidagi viktorinani muvaffaqiyatli yakunladi',
-              font=ft, fill=(200, 200, 230), anchor="mm")
+              font=ft, fill=(200, 235, 255), anchor="mm")
 
-    # Natija qutisi
-    draw.rounded_rectangle([W//2-160, 385, W//2+160, 530],
-                            radius=20, fill=(25, 15, 55), outline=gold, width=2)
+    # ── Natija — markazda katta ──
     pct = int(score / total * 100)
-    draw.text((W//2, 420), "NATIJA", font=ft, fill=(170, 170, 210), anchor="mm")
-    draw.text((W//2, 472), f"{score}/{total}", font=fm, fill=(245, 218, 88), anchor="mm")
-    draw.text((W//2, 515), f"{pct}% to'g'ri", font=ft, fill=(130, 220, 130), anchor="mm")
 
-    # Baho
+    # Natija doira
+    cx2, cy2, cr = W//2, 500, 88
+    draw.ellipse([cx2-cr-4, cy2-cr-4, cx2+cr+4, cy2+cr+4],
+                 fill=(0, 0, 0, 60), outline=gold, width=3)
+    draw.ellipse([cx2-cr, cy2-cr, cx2+cr, cy2+cr],
+                 fill=(10, 30, 60))
+
+    draw.text((cx2, cy2 - 18), f"{score}/{total}",
+              font=fxl, fill=(255, 215, 80), anchor="mm")
+    draw.text((cx2, cy2 + 52), f"{pct}% to'g'ri",
+              font=ft, fill=(180, 230, 255), anchor="mm")
+
+    # ── Baho ──
     if pct == 100:
-        lbl, lc = "MUKAMMAL! ⭐⭐⭐⭐⭐", (245, 218, 88)
+        lbl, lc = "✦ MUKAMMAL ✦", (255, 215, 80)
     elif pct >= 70:
-        lbl, lc = "A'LO NATIJA! ⭐⭐⭐⭐", (130, 220, 130)
+        lbl, lc = "✦ A'LO NATIJA ✦", (100, 255, 180)
     elif pct >= 40:
-        lbl, lc = "YAXSHI! ⭐⭐⭐", (100, 170, 245)
+        lbl, lc = "✦ YAXSHI ✦", (100, 200, 255)
     else:
-        lbl, lc = "DAVOM ETING! ⭐⭐", (230, 160, 90)
+        lbl, lc = "✦ DAVOM ETING ✦", (255, 160, 80)
 
-    draw.text((W//2, 578), lbl, font=fs, fill=lc, anchor="mm")
+    draw.text((W//2, 615), lbl, font=fs, fill=lc, anchor="mm")
 
-    draw.line([(120, 618), (W-120, 618)], fill=gold, width=1)
-    draw.text((W//2, 648),
-              f"Sana: {datetime.now().strftime('%d.%m.%Y')}   |   Quiz ID: {quiz_id}",
-              font=ft, fill=(120, 120, 160), anchor="mm")
-    draw.text((W//2, 682),
+    # ── Pastki info ──
+    draw.line([(120, 648), (W-120, 648)], fill=gold2, width=1)
+    draw.text((W//2, 670),
+              f"Sana: {datetime.now().strftime('%d.%m.%Y')}   •   Quiz ID: {quiz_id}",
+              font=ft, fill=(180, 220, 240), anchor="mm")
+    draw.text((W//2, 698),
               "Meni qanchalik yaxshi bilasiz? — Quiz Bot",
-              font=ft, fill=(100, 100, 140), anchor="mm")
+              font=ft, fill=(140, 190, 210), anchor="mm")
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", dpi=(300, 300))
     buf.seek(0)
     return buf.read()
 
